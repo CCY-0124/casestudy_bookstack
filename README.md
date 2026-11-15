@@ -20,7 +20,7 @@ BookStack is the school's source of truth for admissions, policy, learning suppo
 Two constraints from day one:
 
 - **Self-hosted.** The wiki, the search service and the vector store all run on the school's server. Only the Gemini calls leave the network, and they can be swapped for a local model.
-- **Non-invasive.** No fork of BookStack. The add-on attaches through a volume-mounted theme, reads content through the REST API, and can be removed by unsetting the theme and restarting BookStack.
+- **Non-invasive.** The wiki was already live, so BookStack itself must never change. See [Non-invasive by design](#non-invasive-by-design).
 
 ## Why search results, not a chatbot
 
@@ -39,6 +39,16 @@ What the user sees when the model gets it wrong:
 | No candidate passes the relevance floor | "No results" instead of a weak guess |
 
 In none of these cases can the model put its own words in front of the user.
+
+## Non-invasive by design
+
+The wiki was already in daily use by 1,000+ people, so the add-on had one hard rule: it must never change BookStack itself. Anything I built had to be easy to switch off, fix and update without putting the live wiki at risk.
+
+- **Nothing in BookStack is modified.** No fork, no source patches, no database changes. The add-on attaches through BookStack's own theme system (a volume-mounted theme folder and two environment variables) and reads content through the public REST API with a read-only token.
+- **Off in one step.** Unset the theme, or remove the theme folder, and restart BookStack. The search button disappears and the wiki works exactly as before. The search service can be stopped or deleted at any time without affecting the wiki.
+- **Fix and update without touching the wiki.** The widget's JS and CSS and the theme templates are volume-mounted, so a UI fix goes live on the next page refresh, with no rebuild and no BookStack redeploy. A change to the search service rebuilds only its own container.
+- **Failures stay contained.** If the search service is down or slow, only the search widget shows an error. Pages, login, editing and BookStack's own keyword search keep working.
+- **Upgrades stay on BookStack's schedule.** BookStack can be upgraded as usual; afterwards only the two overridden templates need a re-check.
 
 ## My role
 
@@ -81,12 +91,15 @@ Incremental: each run pulls pages through the BookStack API, checks each page's 
 
 | Decision | Chosen | Rejected, and why |
 |---|---|---|
-| Where permissions are checked | BookStack, on every request | Filtering in the search service: it cannot see sessions, so it would have to trust the client |
+| Where permissions are checked | BookStack's own permission system, on every request | A second permission model in the search service: it would duplicate rules that already exist, could drift out of sync, and cannot see sessions |
 | Output | Ranked links and snippets | Generated answers: a confident wrong answer is the worst failure for a policy wiki |
 | Final ranking | Vector retrieval + LLM rerank (`/rag`) | My earlier hybrid endpoint (vector + BM25 fused with Reciprocal Rank Fusion): it scored lower MRR in eval, so I retired it |
 | Why rerank at all | One extra small-model call per search | Vector distance and keyword overlap could not separate near-duplicate handbook pages |
-| Model size | Small, fast model for rerank | A flagship model: the job is "which of these 10", which needs no reasoning or writing |
+| Embedding model | `gemini-embedding-001` | Gemini Embedding 2: its main addition is multimodal input, which a text-only wiki doesn't need. On text the two retrieve comparably, and 001 costs less |
+| Rerank model size | Small, fast model | A flagship model: the job is "which of these 10", which needs no reasoning or writing |
 | Integration | Volume-mounted theme | Patching BookStack source: a fork to maintain on every upgrade |
+
+**Reuse the platform's permissions instead of building a second copy.** BookStack's permission system is already trusted, tested and maintained by the people who build BookStack. Reusing it means one source of truth with nothing to keep in sync, and search results respect exactly the same rules as browsing: a user sees in search only the pages they could already open on the wiki, and a restricted page never appears, not even as a title or a snippet.
 
 **The model's output type is the security boundary.** The reply is parsed as a list of numbers and anything else is discarded, so the model has no channel to say anything to the user. See [Prompt injection](#prompt-injection) below.
 
@@ -170,6 +183,16 @@ Instead of trying to detect injections, I made them pointless:
 - No who-searched-what audit log. Exposure is already bounded by each user's access, so it would help forensics, not prevention.
 - The search service and BookStack share one host. A breached BookStack container already has its own database credentials, which is true of any BookStack install; keeping BookStack patched is the control there.
 
+## Built for handover
+
+My co-op had an end date, so the system was designed for the school's team to own without me. The goal was to leave it boring: stable, small, and cheap to keep running.
+
+- **Small and readable on purpose.** One search endpoint. The widget is plain HTML, CSS and JavaScript with no framework and no build step. ChromaDB runs as a library inside the search container instead of a separate database server, and I simplified the stack to three containers. Every dependency is pinned. There is nothing the team has to learn just to keep it running.
+- **Minimal upkeep.** Day to day there is nothing to do. The maintenance list is short: check Gemini quota and billing monthly, glance at `/stats` and the logs weekly, and re-check the two overridden templates after a BookStack upgrade.
+- **Easy to install, easy to uninstall.** A step-by-step deploy guide where every command is followed by a check. Uninstalling is the same steps in reverse: redeploy BookStack without the theme overlay, remove the search stack, and optionally delete the index volume.
+- **Written down, not in my head.** A design doc with every decision and the alternative it rejected, the deploy guide with troubleshooting, a security self-review that lists its own open items, and a pre-go-live checklist.
+- **No silent failure after I leave.** Every credential (the indexing token, the Gemini key and its billing account) must sit on a durable school account, not my co-op account. A token on a deactivated account would stop indexing without any error.
+
 ## Running it
 
 - **Fits the existing infrastructure.** Search runs on the wiki's existing domain and behind the same edge protection as the rest of the school's sites. There is no new domain, DNS record, certificate or firewall rule, and nothing the IT team has to manage differently for this one site. The add-on adds no new public entry point.
@@ -177,8 +200,6 @@ Instead of trying to detect injections, I made them pointless:
 - **Hand-run Swarm deploy guide.** Every step is a command with a check, plus a troubleshooting section for the failures that actually happen: a secret mismatch gives 401 on every search, a stack-prefixed service name creates an orphan service, and a wrong public URL makes every result link 404.
 - **Index corruption from memory limits.** An indexing run killed at the container's memory ceiling leaves ChromaDB half-written, and a full reindex cannot repair it because it has to open the broken collection first. The stack sets a 2 GB memory floor, and the guide documents the recovery: remove the stack, delete the index volume, rebuild.
 - **Backups.** The guide requires backing up `.env` and both data volumes, because losing BookStack's application key locks every user out.
-- **Upgrade safety.** After a BookStack upgrade, only the two overridden templates need re-checking, since nothing else in BookStack is touched.
-
 ## Results
 
 | | |
@@ -195,4 +216,4 @@ Instead of trying to detect injections, I made them pointless:
 - Measure before arguing. A labelled test set turned design debates (chunk size, hybrid vs rerank, whether rerank earns its latency) into numbers, and gave me a reason to delete my own work.
 - Narrowing what the model is allowed to output solved hallucination, prompt injection and vendor lock-in with one decision.
 - Keep permission decisions in the system that already owns them. A ranking bug in my code cannot become a permissions bug.
-- Plan the handover. The deploy checklist requires every credential to sit on a durable team account rather than my co-op account, and a 16-check deploy script verifies the stack before go-live.
+- Design for the person after you. The easiest handover is a system with very little to hand over: few moving parts, no special tooling, and every decision written down.
