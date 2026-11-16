@@ -210,10 +210,3 @@ My co-op had an end date, so the system was designed for the school's team to ow
 | Full reindex | ~$0.07 |
 | Added latency from rerank | 0.5–2 s |
 | Public ports on the search backend | 0 |
-
-## What I learned
-
-- Measure before arguing. A labelled test set turned design debates (chunk size, hybrid vs rerank, whether rerank earns its latency) into numbers, and gave me a reason to delete my own work.
-- Narrowing what the model is allowed to output solved hallucination, prompt injection and vendor lock-in with one decision.
-- Keep permission decisions in the system that already owns them. A ranking bug in my code cannot become a permissions bug.
-- Design for the person after you. The easiest handover is a system with very little to hand over: few moving parts, no special tooling, and every decision written down.
